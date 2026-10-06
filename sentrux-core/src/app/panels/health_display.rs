@@ -40,6 +40,40 @@ pub(crate) fn draw_health_section(ui: &mut egui::Ui, report: &HealthReport, tc: 
     draw_cycles(ui, report, tc, row_h);
     draw_flagged_files(ui, report, tc, row_h);
     draw_unstable(ui, report, tc, row_h);
+    draw_extension_data(ui, report, tc);
+}
+
+/// Draw extension data (language-specific metrics from Plugins/MCP extensions).
+fn draw_extension_data(ui: &mut egui::Ui, report: &HealthReport, tc: &ThemeConfig) {
+    if report.extension_data.is_empty() { return; }
+    ui.add_space(3.0);
+    ui.label(
+        egui::RichText::new("── Extended Metrics ──")
+            .monospace()
+            .size(8.0)
+            .color(tc.section_label),
+    );
+    for (name, data) in &report.extension_data {
+        let header = format!("  {}:", name);
+        ui.label(
+            egui::RichText::new(&header)
+                .monospace()
+                .size(8.0)
+                .strong()
+                .color(tc.accent_info),
+        );
+        if let Some(obj) = data.as_object() {
+            for (k, v) in obj {
+                let indent = format!("    {}: {}", k, v);
+                ui.label(
+                    egui::RichText::new(&indent)
+                        .monospace()
+                        .size(8.0)
+                        .color(tc.text_muted),
+                );
+            }
+        }
+    }
 }
 
 /// Draw the quality signal bar at the top.
@@ -181,3 +215,5 @@ fn draw_unstable(ui: &mut egui::Ui, report: &HealthReport, tc: &ThemeConfig, row
             egui::FontId::monospace(8.0), color);
     }
 }
+
+

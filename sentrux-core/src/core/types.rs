@@ -5,6 +5,15 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Serde helper: returns true if the value equals zero.
+fn eq_zero(val: &u32) -> bool {
+    *val == 0
+}
+
+fn u32_is_zero(v: &u32) -> bool {
+    *v == 0
+}
+
 /// A node in the scanned file tree — either a file or a directory.
 /// Directories have `children`; files have line/function counts.
 /// Serialized to JSON for IPC with the Tauri frontend.
@@ -104,6 +113,12 @@ pub struct FuncInfo {
     /// Methods are called via object dispatch — static analysis can't trace all callers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_method: bool,
+    /// Lines of comments within this function.
+    #[serde(skip_serializing_if = "eq_zero")]
+    pub comment_lines: u32,
+    /// Lines of doc comments (///, """, /**, #) within this function.
+    #[serde(skip_serializing_if = "eq_zero")]
+    pub doc_comment_lines: u32,
 }
 
 /// Information about a class, interface, or type definition.

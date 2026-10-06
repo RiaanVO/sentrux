@@ -187,6 +187,11 @@ pub fn run() -> eframe::Result<()> {
     // included old plugin.toml/tags.scm files.
     sentrux_core::analysis::plugin::sync_embedded_plugins();
 
+    // Step 3: Load external metrics plugins from ~/.sentrux/plugins/
+    // Each plugin is a self-contained dylib with plugin_info/plugin_compute/plugin_free.
+    // C# (sentrux-dotnet), comment, security, and future extensions are loaded here.
+    let _ = sentrux_core::plugin_loader::loader::load_all_metrics_plugins();
+
     // Non-blocking update check (once per day, background thread)
     app::update_check::check_for_updates_async(env!("CARGO_PKG_VERSION"));
 
@@ -467,6 +472,21 @@ fn print_check_results(
     println!("sentrux check — {} rules checked\n", check.rules_checked);
     println!("Quality: {}\n",
         (health.quality_signal * 10000.0).round() as u32);
+
+    // Print extension metrics (e.g., C# assembly info)
+    if !health.extension_data.is_empty() {
+        println!("\n── Extended Metrics ──");
+        for (name, data) in &health.extension_data {
+            println!("\n[{}]", name);
+            if let Some(obj) = data.as_object() {
+                for (k, v) in obj {
+                    println!("  {}: {}", k, v);
+                }
+            } else {
+                println!("  {}", data);
+            }
+        }
+    }
 
     if check.violations.is_empty() {
         println!("✓ All rules pass");

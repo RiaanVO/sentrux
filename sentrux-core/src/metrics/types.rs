@@ -107,6 +107,11 @@ pub struct HealthReport {
     /// Normalized root cause scores ∈ [0,1] (for signal computation)
     pub root_cause_scores: super::root_causes::RootCauseScores,
 
+    // ── Extension data (language-specific metrics) ──
+    /// Additional metrics from registered MetricsExtension instances (e.g., C# assembly info).
+    /// Keyed by extension name (e.g., "csharp").
+    pub extension_data: std::collections::HashMap<String, serde_json::Value>,
+
 }
 
 /// A file-level metric: path + numeric value (e.g., fan-out count, line count).

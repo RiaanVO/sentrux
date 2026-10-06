@@ -14,6 +14,7 @@ use super::helpers::{
     resolve_relative, try_resolve_name,
     try_suffix_resolve, file_to_module_path, SuffixIndex, ResolveEnv,
 };
+use super::dotnet::DotnetResolver;
 // Re-export normalize_path so existing callers (tests, graph) still find it here.
 pub(crate) use super::helpers::normalize_path;
 
@@ -39,6 +40,9 @@ pub(crate) struct ResolutionIndex<'a> {
     #[allow(dead_code)]
     /// Module-path suffix index for fuzzy file matching (reserved for future resolution strategies)
     pub suffix_index: &'a SuffixIndex<'a>,
+    /// C# resolver for namespace-based resolution (built once, shared across all files).
+    /// None when no .csproj files were found in the scan root.
+    pub dotnet_resolver: &'a Option<&'a DotnetResolver>,
 }
 
 /// Atomic counters for resolution statistics.
@@ -98,6 +102,12 @@ pub(crate) fn resolve_path_imports_ref(files: &[&FileNode], scan_root: Option<&P
 
     let suffix_index = build_module_suffix_index(&known_files, scan_root, &project_map);
 
+    // Build C# resolver once (scans for .csproj files under scan_root).
+    // This is a fallback resolver for C# namespace imports.
+    let dotnet_resolver: Option<DotnetResolver> = DotnetResolver::new(scan_root).ok();
+    // Create a reference wrapper so we can pass &Option<&DotnetResolver>
+    let dotnet_resolver_ref: Option<&DotnetResolver> = dotnet_resolver.as_ref();
+
     // Load path aliases from two sources:
     // 1. Config files (tsconfig.json paths) — declared in plugin.toml
     // 2. Manifest names (package.json "name", Cargo.toml "package.name") — auto-discovered
@@ -108,7 +118,7 @@ pub(crate) fn resolve_path_imports_ref(files: &[&FileNode], scan_root: Option<&P
     }
     let t_suffix = t0.elapsed();
 
-    let edges = resolve_tier2_imports(files, &known_files, &project_map, &suffix_index, &exts, &path_aliases);
+    let edges = resolve_tier2_imports(files, &known_files, &project_map, &suffix_index, &exts, &path_aliases, &dotnet_resolver_ref);
     let t_total = t0.elapsed();
 
     eprintln!(
@@ -126,7 +136,7 @@ pub(crate) fn resolve_path_imports_ref(files: &[&FileNode], scan_root: Option<&P
 /// Returns Some(ImportEdge) if resolved within the same project, None otherwise.
 fn resolve_single_specifier(
     src: &SourceContext<'_>,
-    _idx: &ResolutionIndex<'_>,
+    idx: &ResolutionIndex<'_>,
     env: &ResolveEnv<'_>,
     stats: &ResolutionStats,
 ) -> Option<ImportEdge> {
@@ -143,6 +153,23 @@ fn resolve_single_specifier(
             Some(ImportEdge { from_file: src.file.path.clone(), to_file: target })
         }
         None => {
+            // Fallback: try C# namespace resolution for dotnet files.
+            // C# uses namespace-based imports (using Cart.Services;) that the
+            // suffix-index cannot resolve because they map to namespace paths,
+            // not file paths. The DotnetResolver parses .csproj files to build
+            // a namespace→file mapping.
+            if idx.dotnet_resolver.is_some() && src.file.lang == "csharp" {
+                let dotnet_ns = src.specifier.replace('/', ".");
+                if let Some(dotnet_resolver) = idx.dotnet_resolver {
+                    if let Ok(resolved_path) = dotnet_resolver.resolve(&dotnet_ns, Path::new(&src.file.path)) {
+                        stats.resolved_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        return Some(ImportEdge {
+                            from_file: src.file.path.clone(),
+                            to_file: resolved_path.to_string_lossy().to_string(),
+                        });
+                    }
+                }
+            }
             stats.unresolved_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             None
         }
@@ -151,16 +178,17 @@ fn resolve_single_specifier(
 }
 
 /// Resolve non-JS/TS imports in parallel using suffix-index and relative-path strategies.
-fn resolve_tier2_imports(
+fn resolve_tier2_imports<'a>(
     files: &[&FileNode],
     known_files: &HashSet<&str>,
     project_map: &HashMap<String, String>,
     suffix_index: &SuffixIndex<'_>,
     exts: &[&str],
     path_aliases: &HashMap<String, Vec<PathAlias>>,
+    dotnet_resolver: &'a Option<&'a DotnetResolver>,
 ) -> Vec<ImportEdge> {
     let stats = ResolutionStats::new();
-    let idx = ResolutionIndex { known_files, project_map, suffix_index };
+    let idx = ResolutionIndex { known_files, project_map, suffix_index, dotnet_resolver };
     let edges: Vec<ImportEdge> = files
         .par_iter()
         .filter(|f| !f.is_dir)

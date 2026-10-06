@@ -299,6 +299,13 @@ pub(crate) fn extract_with_queries(
     }
 
     state.post_process_imports(content, lang);
+
+    // Distribute comment lines to functions before finalizing the analysis.
+    if !state.functions.is_empty() {
+        let comments = extract_comment_lines(tree, content);
+        distribute_comments_to_functions(&comments, &mut state.functions);
+    }
+
     state.into_structural_analysis()
 }
 
@@ -367,6 +374,76 @@ fn distribute_calls_to_functions(
 
     assign_deduped_calls(functions, &mut func_calls);
     module_calls
+}
+
+/// Check if a comment node is a doc comment.
+/// Doc comments are: /// (Rust), # (Elixir/PHP), """ (Python), /** (JS/C-style)
+fn is_doc_comment(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("///")
+        || trimmed.starts_with("//") && !trimmed.starts_with("///") && trimmed.len() > 2
+            && trimmed.chars().nth(2).map(|c| c.is_alphanumeric()).unwrap_or(false)
+        || trimmed.starts_with("\"\"\"")
+        || trimmed.starts_with("/*") && trimmed.contains("*")
+        || trimmed.starts_with("#") && trimmed.len() > 1
+            && !trimmed.starts_with("##") && trimmed.chars().nth(1).map(|c| c.is_alphanumeric()).unwrap_or(false)
+        || trimmed.starts_with(";;")
+}
+
+/// Extract all comment nodes from the tree-sitter AST as (line_number, is_doc) tuples.
+fn extract_comment_lines(tree: &tree_sitter::Tree, content: &[u8]) -> Vec<(u32, bool)> {
+    let root = tree.root_node();
+    let mut comments = Vec::new();
+
+    fn walk(node: tree_sitter::Node, content: &[u8], comments: &mut Vec<(u32, bool)>) {
+        let kind = node.kind();
+        if kind == "comment" || kind == "line_comment" || kind == "block_comment" {
+            if let Ok(text) = node.utf8_text(content) {
+                let start_line = node.start_position().row as u32;
+                let end_line = node.end_position().row as u32;
+                let is_doc = is_doc_comment(text);
+                for line in start_line..=end_line {
+                    // Only mark the first line as the "doc" line for block comments.
+                    // Subsequent lines of the same block are regular comment lines.
+                    comments.push((line, line == start_line && is_doc));
+                }
+            }
+            return;
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                walk(child, content, comments);
+            }
+        }
+    }
+
+    walk(root, content, &mut comments);
+    comments
+}
+
+/// Distribute comment lines to their containing functions.
+/// Uses the same binary-search pattern as distribute_calls_to_functions.
+fn distribute_comments_to_functions(
+    comments: &[(u32, bool)],
+    functions: &mut [FuncInfo],
+) {
+    // Build sorted index for O(log F) lookup.
+    let mut sorted_indices: Vec<(u32, u32, usize)> = functions
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.sl, f.el, i))
+        .collect();
+    sorted_indices.sort_unstable_by_key(|&(sl, _, _)| sl);
+
+    for (line, is_doc) in comments {
+        if let Some(idx) = find_containing_function(&sorted_indices, *line) {
+            if *is_doc {
+                functions[idx].doc_comment_lines += 1;
+            }
+            functions[idx].comment_lines += 1;
+        }
+        // Comments outside any function are ignored (file-level comments).
+    }
 }
 
 

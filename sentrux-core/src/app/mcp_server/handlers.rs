@@ -131,7 +131,8 @@ fn handle_health(_args: &Value, tier: &Tier, state: &mut McpState) -> Result<Val
             "redundancy":  {"score": s(rc.redundancy),  "raw": raw.redundancy_ratio}
         },
         "total_import_edges": h.total_import_edges,
-        "cross_module_edges": h.cross_module_edges
+        "cross_module_edges": h.cross_module_edges,
+        "extension_data": h.extension_data
     });
 
     // Pro: root-cause-organized diagnostics. Tells AI WHERE to focus for each root cause.

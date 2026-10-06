@@ -138,6 +138,9 @@ pub struct ArchBaseline {
     pub total_import_edges: usize,
     /// Cross-module import edges at baseline
     pub cross_module_edges: usize,
+    /// Extension data from registered metrics extensions (e.g., C# assembly info).
+    /// Keyed by extension name.
+    pub extension_data: HashMap<String, serde_json::Value>,
 }
 
 /// Diff between two snapshots (baseline vs current).
@@ -184,6 +187,7 @@ impl ArchBaseline {
             max_depth: report.max_depth,
             total_import_edges: report.total_import_edges,
             cross_module_edges: report.cross_module_edges,
+            extension_data: report.extension_data.clone(),
         }
     }
 

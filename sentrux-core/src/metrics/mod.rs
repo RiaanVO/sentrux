@@ -632,6 +632,20 @@ pub fn compute_health(snapshot: &Snapshot) -> HealthReport {
         quality_signal,
         root_cause_raw,
         root_cause_scores,
+        extension_data: {
+            use std::collections::HashMap;
+            // Merge static (in-core) extensions with dynamic (plugin) extensions.
+            let static_exts = extensions();
+            let mut result: HashMap<String, serde_json::Value> = static_exts
+                .iter()
+                .map(|ext| (ext.name().to_string(), ext.compute(snapshot)))
+                .collect();
+            // Merge plugin (dylib) extension results.
+            let snapshot_json = serde_json::to_string(snapshot).expect("Snapshot serialization failed");
+            let plugin_results = crate::plugin_loader::loader::compute_all_metrics(&snapshot_json);
+            result.extend(plugin_results);
+            result
+        }
     }
 }
 
@@ -891,15 +905,19 @@ pub trait MetricsExtension: Send + Sync {
     fn name(&self) -> &str;
 }
 
-/// Global registry of Pro metrics extensions.
-static METRICS_EXTENSIONS: std::sync::OnceLock<Vec<Box<dyn MetricsExtension>>> = std::sync::OnceLock::new();
+/// Global registry of metrics extensions (multiple calls to register_extensions are additive).
+static METRICS_EXTENSIONS: std::sync::OnceLock<std::sync::Mutex<Vec<Box<dyn MetricsExtension>>>> = std::sync::OnceLock::new();
 
-/// Register Pro metrics extensions (called by sentrux-pro at startup).
+/// Register metrics extensions (called by language plugins at startup).
+/// Multiple registrations are additive — each call appends to the registry.
 pub fn register_extensions(extensions: Vec<Box<dyn MetricsExtension>>) {
-    let _ = METRICS_EXTENSIONS.set(extensions);
+    let registry = METRICS_EXTENSIONS.get_or_init(|| std::sync::Mutex::new(Vec::new()));
+    let mut guard = registry.lock().unwrap();
+    guard.extend(extensions);
 }
 
-/// Get registered extensions (returns empty slice if no Pro).
-pub fn extensions() -> &'static [Box<dyn MetricsExtension>] {
-    METRICS_EXTENSIONS.get().map(|v| v.as_slice()).unwrap_or(&[])
+/// Get registered extensions (returns empty slice if none registered).
+/// Note: caller must drop the mutex guard before mutating the registry.
+pub fn extensions<'a>() -> std::sync::MutexGuard<'a, Vec<Box<dyn MetricsExtension>>> {
+    METRICS_EXTENSIONS.get_or_init(|| std::sync::Mutex::new(Vec::new())).lock().unwrap()
 }

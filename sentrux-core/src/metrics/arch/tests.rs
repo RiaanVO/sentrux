@@ -169,6 +169,7 @@ fn baseline_detects_degradation() {
         max_depth: 3,
         total_import_edges: 10,
         cross_module_edges: 1,
+        extension_data: std::collections::HashMap::new(),
     };
 
     let current = crate::metrics::HealthReport {
@@ -219,6 +220,7 @@ fn baseline_detects_degradation() {
             modularity: 0.53, acyclicity: 0.33, depth: 0.62,
             equality: 0.7, redundancy: 0.9,
         },
+        extension_data: std::collections::HashMap::new(),
     };
 
     let diff = baseline.diff(&current);

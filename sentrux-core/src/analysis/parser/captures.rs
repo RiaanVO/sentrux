@@ -357,6 +357,8 @@ pub(super) fn process_func_def(
             d: None, co: None,
             is_public: is_public || is_test,
             is_method: false,
+            comment_lines: 0,
+            doc_comment_lines: 0,
         });
     }
 }
