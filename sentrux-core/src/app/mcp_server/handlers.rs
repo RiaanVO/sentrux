@@ -342,3 +342,4 @@ fn handle_check_rules(_args: &Value, tier: &Tier, state: &mut McpState) -> Resul
     }
     Ok(response)
 }
+

@@ -36,3 +36,4 @@ base64 = "0.22"
 [features]
 default = []
 pro = []  # Activated by sentrux-pro crate via sentrux-bin
+

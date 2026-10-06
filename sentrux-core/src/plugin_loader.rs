@@ -157,13 +157,18 @@ pub mod loader {
                     if result_ptr.is_null() {
                         return Ok(None);
                     }
-                    let json_str = unsafe {
+                    // CRITICAL: Convert to owned String BEFORE freeing the memory
+            // The plugin allocates the result string via CString::into_raw,
+            // and we must parse it before calling free_fn which releases the memory.
+            // Parsing from freed memory is undefined behavior.
+            let json_str: String = unsafe {
                         CStr::from_ptr(result_ptr)
                             .to_str()
                             .map_err(|e| format!("UTF-8 decode: {}", e))?
+                            .to_string()
                     };
                     unsafe { (plugin.free_fn)(result_ptr) };
-                    let value: serde_json::Value = serde_json::from_str(json_str)
+                    let value: serde_json::Value = serde_json::from_str(&json_str)
                         .map_err(|e| format!("JSON parse error: {}", e))?;
                     Ok(Some(value))
                 }

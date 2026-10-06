@@ -114,10 +114,10 @@ pub struct FuncInfo {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_method: bool,
     /// Lines of comments within this function.
-    #[serde(skip_serializing_if = "eq_zero")]
+    #[serde(default, skip_serializing_if = "eq_zero")]
     pub comment_lines: u32,
     /// Lines of doc comments (///, """, /**, #) within this function.
-    #[serde(skip_serializing_if = "eq_zero")]
+    #[serde(default, skip_serializing_if = "eq_zero")]
     pub doc_comment_lines: u32,
 }
 
