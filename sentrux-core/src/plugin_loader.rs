@@ -45,6 +45,24 @@ pub mod loader {
 
     // ─── Plugin Metadata ───
 
+    /// Capability declaration - what data fields a plugin needs.
+    /// Each capability defines which fields of which types are required.
+    #[derive(Debug, Clone, serde::Deserialize, Default)]
+    pub struct PluginCapability {
+        /// Function-level fields required (e.g., "comment_lines").
+        #[serde(default)]
+        pub func_fields: Vec<String>,
+        /// Class-level fields required (e.g., "extends").
+        #[serde(default)]
+        pub class_fields: Vec<String>,
+        /// File-level fields required (e.g., "import_statements").
+        #[serde(default)]
+        pub file_fields: Vec<String>,
+        /// Whether the plugin needs AST data for deep analysis.
+        #[serde(default)]
+        pub needs_ast: bool,
+    }
+
     /// Metadata extracted from a plugin's `plugin_info()` call.
     #[derive(Debug, Clone, serde::Deserialize)]
     pub struct PluginMetadata {
@@ -54,10 +72,38 @@ pub mod loader {
         pub display_name: String,
         /// Semver version string.
         pub version: String,
-        /// Capabilities the plugin declares it needs (e.g., "comment_data").
-        pub capabilities: Vec<String>,
+        /// Snapshot version this plugin was built against.
+        /// Used for forward-compatibility validation.
+        #[serde(default)]
+        pub snapshot_version: u32,
+        /// Rich capability contract: maps capability name to its field requirements.
+        /// Supports backward-compatible deserialization from the old `Vec<String>` format.
+        #[serde(deserialize_with = "deserialize_capabilities")]
+        pub capabilities: HashMap<String, PluginCapability>,
         /// Minimum sentrux version this plugin requires (optional).
         pub min_sentrux_version: Option<String>,
+    }
+
+    /// Backward-compatible capability field: accepts both old `Vec<String>`
+    /// and new `HashMap<String, PluginCapability>` formats.
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum CapabilitiesField {
+        /// Old format: `"capabilities": ["comment_data"]`
+        Old(Vec<String>),
+        /// New format: `"capabilities": {"comment_data": {"func_fields": [...]}}`
+        New(HashMap<String, PluginCapability>),
+    }
+
+    /// Deserialize capabilities, supporting both old and new formats.
+    fn deserialize_capabilities<'de, D>(deserializer: D) -> Result<HashMap<String, PluginCapability>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        serde::Deserialize::deserialize(deserializer).map(|field: CapabilitiesField| match field {
+            CapabilitiesField::Old(v) => v.into_iter().map(|s| (s, PluginCapability::default())).collect(),
+            CapabilitiesField::New(h) => h,
+        })
     }
 
     /// Error loading a single plugin (non-fatal, logged and skipped).
@@ -129,7 +175,7 @@ pub mod loader {
         pub fn needs_capability(&self, capability: &str) -> bool {
             self.plugins
                 .iter()
-                .any(|p| p.metadata.capabilities.contains(&capability.to_string()))
+                .any(|p| p.metadata.capabilities.contains_key(capability))
         }
 
         /// Return the number of loaded plugins.
@@ -327,6 +373,15 @@ pub mod loader {
         let metadata: PluginMetadata = serde_json::from_str(&info_json)
             .map_err(|e| format!("Invalid plugin_info JSON: {} (raw: {})", e, info_json))?;
 
+        // Validate snapshot version compatibility
+        const LOADER_SNAPSHOT_VERSION: u32 = 1;
+        if metadata.snapshot_version > LOADER_SNAPSHOT_VERSION {
+            return Err(format!(
+                "Plugin '{}' requires snapshot version {} but loader supports up to {}. Update sentrux.",
+                metadata.name, metadata.snapshot_version, LOADER_SNAPSHOT_VERSION
+            ));
+        }
+
         // Validate name matches directory name
         let dir_name = plugin_dir
             .file_name()
@@ -369,7 +424,7 @@ pub mod loader {
             "[plugin] Loaded: {} v{} [{}]",
             metadata.display_name,
             metadata.version,
-            metadata.capabilities.join(", ")
+            metadata.capabilities.keys().cloned().collect::<Vec<_>>().join(", ")
         );
 
         Ok(metadata)
@@ -425,9 +480,21 @@ pub mod loader {
 
         #[test]
         fn test_load_empty_dir() {
+            // Create a temporary empty directory and test loading from it.
+            let tmp = std::env::temp_dir().join("sentrux_test_plugins_empty");
+            let _ = std::fs::create_dir_all(&tmp);
+            let old_var = std::env::var("SENTRUX_PLUGINS_DIR").ok();
+            std::env::set_var("SENTRUX_PLUGINS_DIR", tmp.to_str().unwrap());
             let result = load_all_metrics_plugins();
-            assert!(result.is_ok());
-            assert!(result.unwrap().is_empty());
+            assert!(result.is_ok(), "Empty plugins dir should return Ok");
+            assert!(result.unwrap().is_empty(), "Empty dir should load no plugins");
+            // Restore
+            if let Some(v) = old_var {
+                std::env::set_var("SENTRUX_PLUGINS_DIR", v);
+            } else {
+                std::env::remove_var("SENTRUX_PLUGINS_DIR");
+            }
+            let _ = std::fs::remove_dir_all(&tmp);
         }
 
         #[test]

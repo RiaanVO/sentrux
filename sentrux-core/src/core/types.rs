@@ -3,6 +3,8 @@
 //! These structs form the canonical representation of scanned source files.
 //! All layers (analysis, layout, renderer, metrics) depend on these types.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Serde helper: returns true if the value equals zero.
@@ -51,7 +53,7 @@ pub struct FileNode {
 
 /// Structural analysis results for a single file.
 /// Populated by the tree-sitter parser when the file is small enough to parse.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StructuralAnalysis {
     /// Detected functions with line ranges and complexity
     #[serde(rename = "fn", skip_serializing_if = "Option::is_none")]
@@ -68,15 +70,21 @@ pub struct StructuralAnalysis {
     /// Semantic tags for classification (e.g. "test", "config", "entry")
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
-    /// Comment line count from tree-sitter AST. Not serialized — internal use only.
+    /// Comment line count from tree-sitter AST.
     /// Computed during parse to replace tokei dependency.
-    #[serde(skip)]
+    /// Also serialized so plugins (e.g. comment health) can compute file-level ratios
+    /// even when there are no functions to distribute comments to.
+    #[deprecated(note = "Use extensions[\"comment_lines\"] instead")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub comment_lines: Option<u32>,
+    /// Pluggable extension data.
+    #[serde(default)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 /// Information about a single function or method.
 /// Field names are abbreviated for compact JSON serialization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FuncInfo {
     /// Function name
     pub n: String,
@@ -114,18 +122,34 @@ pub struct FuncInfo {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub is_method: bool,
     /// Lines of comments within this function.
+    #[deprecated(note = "Use extensions[\"comment_lines\"] instead")]
     #[serde(default, skip_serializing_if = "eq_zero")]
     pub comment_lines: u32,
     /// Lines of doc comments (///, """, /**, #) within this function.
+    #[deprecated(note = "Use extensions[\"doc_comment_lines\"] instead")]
     #[serde(default, skip_serializing_if = "eq_zero")]
     pub doc_comment_lines: u32,
+    /// Pluggable extension data. Core populates this based on plugin capabilities.
+    #[serde(default)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 /// Information about a class, interface, or type definition.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClassInfo {
     /// Class/interface name
     pub n: String,
+    /// Start line (1-based) of the definition.
+    /// Used for doc coverage analysis to find comments preceding the definition.
+    #[serde(default)]
+    pub sl: u32,
+    /// End line (1-based) of the definition.
+    #[serde(default)]
+    pub el: u32,
+    /// Whether this class/interface/type is publicly visible.
+    /// Used by doc coverage: only public types need documentation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub is_public: bool,
     /// Method names defined in this class
     #[serde(skip_serializing_if = "Option::is_none")]
     pub m: Option<Vec<String>>,
@@ -136,6 +160,17 @@ pub struct ClassInfo {
     /// (Martin 2003: Distance from Main Sequence).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub k: Option<String>,
+    /// Lines of comments within or preceding this definition (set by comment distribution).
+    #[deprecated(note = "Use extensions[\"comment_lines\"] instead")]
+    #[serde(default, skip_serializing_if = "eq_zero")]
+    pub comment_lines: u32,
+    /// Lines of doc comments (///, """, /**, #) within or preceding this definition.
+    #[deprecated(note = "Use extensions[\"doc_comment_lines\"] instead")]
+    #[serde(default, skip_serializing_if = "eq_zero")]
+    pub doc_comment_lines: u32,
+    /// Pluggable extension data.
+    #[serde(default)]
+    pub extensions: HashMap<String, serde_json::Value>,
 }
 
 /// Cached file info for O(1) lookup by path.

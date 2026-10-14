@@ -155,7 +155,9 @@ pub(crate) fn parse_file_from_content(content: &[u8], lang: &str) -> Option<Stru
     })?;
 
     let mut sa = extract_with_queries(&tree, content, query, lang);
-    sa.comment_lines = Some(count_comment_lines(&tree));
+    let comment_count = count_comment_lines(&tree);
+    sa.comment_lines = Some(comment_count); // deprecated field
+    sa.extensions.insert("comment_lines".to_string(), serde_json::json!(comment_count));
 
     // Cache
     {
@@ -270,6 +272,7 @@ impl ExtractionState {
             co: if module_calls.is_empty() { None } else { Some(module_calls) },
             tags: if self.tags.is_empty() { None } else { Some(self.tags) },
             comment_lines: None, // Filled later by parse_file_from_content
+            extensions: Default::default(),
         }
     }
 }
@@ -300,10 +303,18 @@ pub(crate) fn extract_with_queries(
 
     state.post_process_imports(content, lang);
 
-    // Distribute comment lines to functions before finalizing the analysis.
+    // Extract all comment lines from the AST so file-level totals are always available.
+    let all_comments = extract_comment_lines(tree, content);
+
+    // Distribute comment lines to functions and classes before finalizing the analysis.
+    // Comments are assigned to:
+    // 1. Functions/classes containing the comment line ([sl, el])
+    // 2. Functions/classes with a doc comment within ~5 lines above their start line
     if !state.functions.is_empty() {
-        let comments = extract_comment_lines(tree, content);
-        distribute_comments_to_functions(&comments, &mut state.functions);
+        distribute_comments_to_functions(&all_comments, &mut state.functions);
+    }
+    if !state.classes.is_empty() {
+        distribute_comments_to_classes(&all_comments, &mut state.classes);
     }
 
     state.into_structural_analysis()
@@ -421,8 +432,17 @@ fn extract_comment_lines(tree: &tree_sitter::Tree, content: &[u8]) -> Vec<(u32, 
     comments
 }
 
+/// Comment doc pre-window: how many lines above a function start to look for
+/// doc comments (///, /**, etc.). Doc comments typically appear directly above
+/// the function/interface they document, not inside it.
+const DOC_PRE_WINDOW: u32 = 5;
+
 /// Distribute comment lines to their containing functions.
-/// Uses the same binary-search pattern as distribute_calls_to_functions.
+///
+/// Two cases:
+/// 1. Comments *inside* the function `[sl, el]` are assigned to that function.
+/// 2. Doc comments within `DOC_PRE_WINDOW` lines *above* `sl` are also assigned
+///    to that function (e.g., JSDoc `/**` appearing before an interface).
 fn distribute_comments_to_functions(
     comments: &[(u32, bool)],
     functions: &mut [FuncInfo],
@@ -436,14 +456,117 @@ fn distribute_comments_to_functions(
     sorted_indices.sort_unstable_by_key(|&(sl, _, _)| sl);
 
     for (line, is_doc) in comments {
+        // Case 1: comment is inside a function's range
         if let Some(idx) = find_containing_function(&sorted_indices, *line) {
             if *is_doc {
                 functions[idx].doc_comment_lines += 1;
+                functions[idx].extensions.insert(
+                    "doc_comment_lines".to_string(),
+                    serde_json::json!(functions[idx].doc_comment_lines),
+                );
             }
             functions[idx].comment_lines += 1;
+            functions[idx].extensions.insert(
+                "comment_lines".to_string(),
+                serde_json::json!(functions[idx].comment_lines),
+            );
+            continue;
         }
-        // Comments outside any function are ignored (file-level comments).
+
+        // Case 2: doc comment appears just above a function start.
+        // Look for the next function that starts after this line,
+        // and check if it's within DOC_PRE_WINDOW lines.
+        if *is_doc {
+            for &(sl, _, idx) in &sorted_indices {
+                if *line < sl && sl <= *line + DOC_PRE_WINDOW {
+                    functions[idx].doc_comment_lines += 1;
+                    functions[idx].extensions.insert(
+                        "doc_comment_lines".to_string(),
+                        serde_json::json!(functions[idx].doc_comment_lines),
+                    );
+                    functions[idx].comment_lines += 1;
+                    functions[idx].extensions.insert(
+                        "comment_lines".to_string(),
+                        serde_json::json!(functions[idx].comment_lines),
+                    );
+                    break;
+                }
+            }
+        }
+        // Non-doc comments outside any function range are ignored.
     }
+}
+
+/// Distribute comment lines to classes, interfaces, and type definitions.
+/// Same logic as distribute_comments_to_functions but operates on ClassInfo.
+fn distribute_comments_to_classes(
+    comments: &[(u32, bool)],
+    classes: &mut [crate::core::types::ClassInfo],
+) {
+    // Build sorted index for O(log F) lookup.
+    let mut sorted_indices: Vec<(u32, u32, usize)> = classes
+        .iter()
+        .enumerate()
+        .map(|(i, f)| (f.sl, f.el, i))
+        .collect();
+    sorted_indices.sort_unstable_by_key(|&(sl, _, _)| sl);
+
+    for (line, is_doc) in comments {
+        // Case 1: comment is inside a class/interface/type range
+        if let Some(idx) = find_containing_class(&sorted_indices, *line) {
+            if *is_doc {
+                classes[idx].doc_comment_lines += 1;
+                classes[idx].extensions.insert(
+                    "doc_comment_lines".to_string(),
+                    serde_json::json!(classes[idx].doc_comment_lines),
+                );
+            }
+            classes[idx].comment_lines += 1;
+            classes[idx].extensions.insert(
+                "comment_lines".to_string(),
+                serde_json::json!(classes[idx].comment_lines),
+            );
+            continue;
+        }
+
+        // Case 2: doc comment appears just above a class start.
+        // Look for the next class that starts after this line,
+        // and check if it's within DOC_PRE_WINDOW lines.
+        if *is_doc {
+            for &(sl, _, idx) in &sorted_indices {
+                if *line < sl && sl <= *line + DOC_PRE_WINDOW {
+                    classes[idx].doc_comment_lines += 1;
+                    classes[idx].extensions.insert(
+                        "doc_comment_lines".to_string(),
+                        serde_json::json!(classes[idx].doc_comment_lines),
+                    );
+                    classes[idx].comment_lines += 1;
+                    classes[idx].extensions.insert(
+                        "comment_lines".to_string(),
+                        serde_json::json!(classes[idx].comment_lines),
+                    );
+                    break;
+                }
+            }
+        }
+        // Non-doc comments outside any class range are ignored.
+    }
+}
+
+/// Find the innermost class containing a given line number.
+/// Same binary-search pattern as find_containing_function.
+fn find_containing_class(sorted_indices: &[(u32, u32, usize)], line: u32) -> Option<usize> {
+    let pos = sorted_indices.partition_point(|&(sl, _, _)| sl <= line);
+    if pos == 0 {
+        return None;
+    }
+    for i in (0..pos).rev() {
+        let (sl, el, orig_idx) = sorted_indices[i];
+        if line >= sl && line <= el {
+            return Some(orig_idx);
+        }
+    }
+    None
 }
 
 
@@ -484,7 +607,10 @@ pub fn parse_file(path: &str, lang: &str, max_parse_size: usize) -> Option<Struc
         parser.parse(&content, None)
     })?;
 
-    let sa = extract_with_queries(&tree, &content, query, lang);
+    let mut sa = extract_with_queries(&tree, &content, query, lang);
+    let comment_count = count_comment_lines(&tree);
+    sa.comment_lines = Some(comment_count); // deprecated field
+    sa.extensions.insert("comment_lines".to_string(), serde_json::json!(comment_count));
 
     // Insert under lock — single data structure, no race between map and order.
     // ParseCache::insert handles dedup + eviction atomically.

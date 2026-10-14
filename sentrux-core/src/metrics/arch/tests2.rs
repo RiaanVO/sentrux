@@ -122,6 +122,7 @@ fn make_file_with_classes(path: &str, classes: Vec<ClassInfo>) -> FileNode {
             imp: None,
             co: None,
             tags: None, comment_lines: None,
+                extensions: Default::default(),
         }),
         children: None,
     }
@@ -146,9 +147,15 @@ fn make_snapshot_with_files(edges: Vec<ImportEdge>, files: Vec<FileNode>) -> Sna
 fn cls(name: &str, kind: &str) -> ClassInfo {
     ClassInfo {
         n: name.to_string(),
+        sl: 1,
+        el: 10,
+        is_public: false,
         m: None,
         b: None,
         k: Some(kind.to_string()),
+        comment_lines: 0,
+        doc_comment_lines: 0,
+            extensions: Default::default(),
     }
 }
 

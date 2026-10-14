@@ -246,10 +246,11 @@ mod tests {
             mtime: 0.0, gs: String::new(), lang: "rust".to_string(),
             sa: Some(StructuralAnalysis {
                 functions: Some(vec![
-                    FuncInfo { n: "short".into(), sl: 1, el: 10, ln: 10, cc: Some(2), cog: None, pc: None, bh: None, d: None, co: None, is_public: false, is_method: false },
-                    FuncInfo { n: "long".into(), sl: 11, el: 100, ln: 90, cc: Some(3), cog: None, pc: None, bh: None, d: None, co: None, is_public: false, is_method: false },
+                    FuncInfo { n: "short".into(), sl: 1, el: 10, ln: 10, cc: Some(2), cog: None, pc: None, bh: None, d: None, co: None, is_public: false, is_method: false, comment_lines: 0, doc_comment_lines: 0, extensions: Default::default(), },
+                    FuncInfo { n: "long".into(), sl: 11, el: 100, ln: 90, cc: Some(3), cog: None, pc: None, bh: None, d: None, co: None, is_public: false, is_method: false, comment_lines: 0, doc_comment_lines: 0, extensions: Default::default(), },
                 ]),
                 cls: None, imp: None, co: None, tags: None, comment_lines: None,
+                extensions: Default::default(),
             }),
             children: None,
         };

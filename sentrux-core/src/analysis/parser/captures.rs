@@ -359,6 +359,12 @@ pub(super) fn process_func_def(
             is_method: false,
             comment_lines: 0,
             doc_comment_lines: 0,
+            extensions: {
+                let mut ext = std::collections::HashMap::new();
+                ext.insert("comment_lines".to_string(), serde_json::json!(0u32));
+                ext.insert("doc_comment_lines".to_string(), serde_json::json!(0u32));
+                ext
+            },
         });
     }
 }
@@ -375,11 +381,56 @@ pub(super) fn process_class_def(
     });
     if !name.is_empty() {
         let bases = match_node.and_then(|node| extract_base_classes(node, pctx.content, pctx.lang));
+        let is_public = match_node.map(|node| is_public_class(node, pctx.content)).unwrap_or(false);
         classes.push(ClassInfo {
-            n: name, m: None, b: bases,
+            n: name,
+            sl: match_node.map(|n| start_line(n) as u32).unwrap_or(0),
+            el: match_node.map(|n| end_line(n) as u32).unwrap_or(0),
+            is_public,
+            m: None, b: None,
             k: class_kind.map(|s| s.to_string()),
+            comment_lines: 0,
+            doc_comment_lines: 0,
+            extensions: {
+                let mut ext = std::collections::HashMap::new();
+                ext.insert("comment_lines".to_string(), serde_json::json!(0u32));
+                ext.insert("doc_comment_lines".to_string(), serde_json::json!(0u32));
+                ext
+            },
         });
     }
+}
+
+/// Extract the start line (0-based) from a tree-sitter node.
+fn start_line(node: tree_sitter::Node) -> usize {
+    node.start_position().row
+}
+
+/// Extract the end line (0-based) from a tree-sitter node.
+fn end_line(node: tree_sitter::Node) -> usize {
+    node.end_position().row
+}
+
+/// Check whether a class/type definition node is public by looking for
+/// visibility markers: `pub`, `export`, or no visibility modifier (public by default in JS/TS).
+fn is_public_class(node: tree_sitter::Node, content: &[u8]) -> bool {
+    // Check for `pub` keyword in the preceding text
+    // Look at the text before the node's start position
+    if node.start_byte() > 0 {
+        let preceding = &content[node.start_byte().saturating_sub(30)..node.start_byte()];
+        let preceding_str = std::str::from_utf8(preceding).unwrap_or("");
+        if preceding_str.contains("pub ") || preceding_str.contains("pub\n") || preceding_str.contains("pub\t") {
+            return true;
+        }
+    }
+    // Check for `export` keyword (TypeScript/JS)
+    if let Ok(text) = node.utf8_text(content) {
+        let trimmed = text.trim_start();
+        if trimmed.starts_with("export ") || trimmed.starts_with("export\n") || trimmed.starts_with("export\t") {
+            return true;
+        }
+    }
+    false
 }
 
 /// Apply module name transform from plugin profile (e.g., Elixir PascalCase→snake_case).
