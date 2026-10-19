@@ -190,7 +190,12 @@ pub fn run() -> eframe::Result<()> {
     // Step 3: Load external metrics plugins from ~/.sentrux/plugins/
     // Each plugin is a self-contained dylib with plugin_info/plugin_compute/plugin_free.
     // C# (sentrux-dotnet), comment, security, and future extensions are loaded here.
-    let _ = sentrux_core::plugin_loader::loader::load_all_metrics_plugins();
+    // Load metrics plugins — volatile access prevents dead code elimination
+    let mut plugin_count = sentrux_core::plugin_loader::loader::load_all_metrics_plugins()
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let _count = unsafe { std::ptr::read_volatile(&plugin_count) };
+    let _ = plugin_count;
 
     // Non-blocking update check (once per day, background thread)
     app::update_check::check_for_updates_async(env!("CARGO_PKG_VERSION"));

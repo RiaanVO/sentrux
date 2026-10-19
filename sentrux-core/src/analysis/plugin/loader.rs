@@ -106,6 +106,12 @@ pub fn load_all_plugins() -> (Vec<LoadedPlugin>, Vec<PluginLoadError>) {
 
 /// Load a single plugin from a directory.
 fn load_single_plugin(plugin_dir: &Path) -> Result<LoadedPlugin, String> {
+    // Skip directories that don't have plugin.toml (e.g., metrics-only plugins)
+    let toml_path = plugin_dir.join("plugin.toml");
+    if !toml_path.exists() {
+        return Err("No plugin.toml found — likely a metrics-only plugin directory, skipping".into());
+    }
+
     // 1. Parse manifest
     let manifest = PluginManifest::load(plugin_dir)?;
 

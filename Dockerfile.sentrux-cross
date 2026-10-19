@@ -1,0 +1,27 @@
+# Cross-compilation image for sentrux-bin targeting aarch64-unknown-linux-gnu
+# Mirrors the proven approach in docker-sbx-extensions/artifacts-build/Dockerfile
+FROM rust:bookworm AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install cross-compilation toolchain and GTK3 runtime libraries for cross-linking
+# These are required by sentrux-core (eframe, egui, rfd gtk3, git2, tree-sitter)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu \
+        g++-aarch64-linux-gnu \
+        binutils-aarch64-linux-gnu \
+        pkg-config \
+        libssl-dev \
+        libatk1.0-dev \
+        libgtk-3-dev \
+        libgdk-pixbuf-2.0-dev \
+        libcairo2-dev \
+        libglib2.0-dev \
+        libpango1.0-dev \
+        && rm -rf /var/lib/apt/lists/*
+
+# Add the aarch64-unknown-linux-gnu Rust target
+RUN rustup target add aarch64-unknown-linux-gnu
+
+WORKDIR /build
